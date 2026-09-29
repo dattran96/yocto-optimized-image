@@ -1,0 +1,22 @@
+From 6fb5ae837d6fa11cb18441246363b960763ae045 Mon Sep 17 00:00:00 2001
+From: Dat Tran <t.ng.t.dat@gmail.com>
+Date: Tue, 29 Sep 2026 18:58:50 +0200
+Subject: [PATCH] microsocks: print a message at startup
+
+Upstream-Status: Inappropriate [learning example]
+---
+ sockssrv.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sockssrv.c b/sockssrv.c
+index f7b865a..f8eff36 100644
+--- a/sockssrv.c
++++ b/sockssrv.c
+@@ -411,6 +411,7 @@ static void zero_arg(char *s) {
+ }
+ 
+ int main(int argc, char** argv) {
++	printf("Learn yocto\n");
+ 	int ch;
+ 	const char *listenip = "0.0.0.0";
+ 	char *p, *q;

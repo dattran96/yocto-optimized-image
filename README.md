@@ -21,7 +21,7 @@ Requirements: a Linux host set up for Yocto builds
 
 ```bash
 git clone -b scarthgap https://git.yoctoproject.org/poky
-git clone <this repo> meta-mylayer
+git clone https://github.com/dattran96/yocto-optimized-image.git meta-mylayer
 
 cd poky
 source oe-init-build-env build

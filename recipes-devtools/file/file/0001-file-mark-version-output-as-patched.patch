@@ -1,0 +1,24 @@
+From 1c053f1ee2a4b66ae43f502390b0b1208abd48c1 Mon Sep 17 00:00:00 2001
+From: Dat Tran <t.ng.t.dat@gmail.com>
+Date: Tue, 29 Sep 2026 17:32:39 +0200
+Subject: [PATCH] file: mark version output as patched
+
+Upstream-Status: Inappropriate [local customization for learning]
+
+---
+ src/file.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/file.c b/src/file.c
+index 31c1035c..ae21c4db 100644
+--- a/src/file.c
++++ b/src/file.c
+@@ -327,7 +327,7 @@ main(int argc, char *argv[])
+ 		case 'v':
+ 			if (magicfile == NULL)
+ 				magicfile = magic_getpath(magicfile, action);
+-			(void)fprintf(stdout, "%s-%s\n", file_getprogname(),
++			(void)fprintf(stdout, "%s-%s (patched by Dat)\n", file_getprogname(),
+ 			    VERSION);
+ 			(void)fprintf(stdout, "magic file from %s\n",
+ 			    magicfile);

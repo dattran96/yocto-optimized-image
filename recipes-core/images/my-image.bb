@@ -10,6 +10,7 @@ IMAGE_INSTALL = " \
     file \
     hello \
     microsocks \
+    sysmon \
 "
 
 IMAGE_FEATURES += "ssh-server-dropbear"

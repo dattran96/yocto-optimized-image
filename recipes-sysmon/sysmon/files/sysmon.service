@@ -1,0 +1,10 @@
+[Unit]
+Description=System monitor daemon
+After=syslog.target
+
+[Service]
+ExecStart=/usr/sbin/sysmon -i 10
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

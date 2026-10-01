@@ -1,0 +1,45 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          sysmon
+# Required-Start:    $local_fs $syslog
+# Required-Stop:     $local_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: System monitor daemon
+### END INIT INFO
+
+DAEMON=/usr/sbin/sysmon
+PIDFILE=/var/run/sysmon.pid
+ARGS="-i 10"
+
+case "$1" in
+    start)
+        echo -n "Starting sysmon: "
+        start-stop-daemon -S -b -m -p $PIDFILE -x $DAEMON -- $ARGS
+        echo "done"
+        ;;
+    stop)
+        echo -n "Stopping sysmon: "
+        start-stop-daemon -K -p $PIDFILE
+        rm -f $PIDFILE
+        echo "done"
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        if [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null; then
+            echo "sysmon is running (pid $(cat $PIDFILE))"
+        else
+            echo "sysmon is not running"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+exit 0

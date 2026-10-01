@@ -10,6 +10,7 @@ contains:
 | `recipes-devtools/file/` | A `.bbappend` that patches an existing poky recipe (`file`), created with `devtool modify` / `devtool finish` |
 | `recipes-microsocks/microsocks/` | A recipe for a third-party project from GitHub, created with `devtool add`, plus a local patch |
 | `recipes-core/images/my-image.bb` | A custom image recipe (`inherit core-image`) with an SSH server |
+| `recipes-sysmon/sysmon/` | A CMake project (`inherit cmake`) packaged as a daemon that starts at boot, with both a SysVinit script and a systemd unit |
 | `sdk-example/` | A program cross-compiled outside BitBake with the SDK generated from `my-image` |
 
 The [learning log](#learning-log) below records what I did at each step, the
@@ -145,6 +146,27 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
   clean `tmp/`. Finished recipes are restored from the sstate cache, and `tmp/` dropped from
   72 GB to 16 GB.
 
+### Step 8: A CMake project as a boot service
+
+- Wrote `sysmon`, a small C daemon that logs the load average and available memory to
+  syslog at a fixed interval and exits cleanly on `SIGTERM`, with a `CMakeLists.txt` that uses
+  `GNUInstallDirs` instead of hard-coded paths.
+- The recipe has no `do_configure` / `do_compile`: `inherit cmake` runs CMake with Yocto's
+  toolchain file and installs into `${D}`. The build happens in a separate build directory (`B` ≠ `S`).
+- `SRC_URI = "file://sysmon"` fetches a whole directory; `S = "${WORKDIR}/sysmon"`.
+- Supports both init systems, like the recipes in poky:
+  - SysVinit: `inherit update-rc.d`, `INITSCRIPT_NAME` / `INITSCRIPT_PARAMS = "defaults 90"`, and an
+    init script using `start-stop-daemon` (background, pid file, stop by `SIGTERM`).
+  - systemd: `inherit systemd`, `SYSTEMD_SERVICE:${PN}` and a `.service` unit.
+  - `do_install:append` uses `bb.utils.contains('DISTRO_FEATURES', ...)` so only the files for
+    the active init system are installed (this build uses `INIT_MANAGER = "sysvinit"`).
+- Verified on the target: the service starts at boot via `/etc/rc5.d/S90sysmon`, logs to
+  `/var/log/messages` every 10 s, and `/etc/init.d/sysmon stop|start|status` work
+  (the log shows `stopped` from the signal handler, then a new PID).
+- **Problem:** `ERROR: Nothing PROVIDES 'sysmon'`. The recipe was in `recipes-sysmon/` instead of
+  `recipes-sysmon/sysmon/`. `BBFILES` in `conf/layer.conf` only matches `recipes-*/*/*.bb`,
+  so the file was never parsed. Moved the recipe and `files/` one level down.
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept
@@ -156,7 +178,7 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 ## Next steps
 
 - [x] Build an SDK (`bitbake my-image -c populate_sdk`) and compile against it outside Yocto
-- [ ] Write a recipe for a CMake project and a systemd/SysVinit service
+- [x] Write a recipe for a CMake project and a systemd/SysVinit service
 - [ ] Kernel: configuration fragments and a kernel module recipe
 - [ ] Create my own distro config instead of using `poky`
 - [ ] Build for real hardware (e.g. Raspberry Pi with `meta-raspberrypi`)

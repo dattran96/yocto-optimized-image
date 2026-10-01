@@ -10,6 +10,7 @@ contains:
 | `recipes-devtools/file/` | A `.bbappend` that patches an existing poky recipe (`file`), created with `devtool modify` / `devtool finish` |
 | `recipes-microsocks/microsocks/` | A recipe for a third-party project from GitHub, created with `devtool add`, plus a local patch |
 | `recipes-core/images/my-image.bb` | A custom image recipe (`inherit core-image`) with an SSH server |
+| `sdk-example/` | A program cross-compiled outside BitBake with the SDK generated from `my-image` |
 
 The [learning log](#learning-log) below records what I did at each step, the
 problems I ran into and how I solved them.
@@ -118,6 +119,32 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
   without editing.
 - Added `microsocks` to `my-image` and verified it in the booted image.
 
+### Step 7: Building and using an SDK
+
+- Built a standard SDK for the image with `bitbake my-image -c populate_sdk`. The result is
+  a self-extracting installer (`tmp/deploy/sdk/poky-glibc-x86_64-my-image-cortexa57-qemuarm64-toolchain-5.0.20.sh`, 183 MB).
+- The SDK has two parts, each with its own manifest: host tools that run on any x86-64 PC
+  (the `nativesdk` cross-compiler, `pkg-config`, ...) and a target sysroot with the headers and
+  libraries of `my-image` (e.g. `libz-dev 1.3.1`, matching `libz1 1.3.1` in the image).
+- Installed it without root (`-d ~/yocto-sdk/my-image`) and used it in a clean shell with no
+  BitBake environment: `source environment-setup-cortexa57-poky-linux` sets `CC`, `CFLAGS`,
+  `LDFLAGS` and `PKG_CONFIG_*`, just like BitBake does for recipes.
+- Cross-compiled [`sdk-example/zversion.c`](sdk-example/zversion.c) against zlib from the SDK sysroot:
+  ```bash
+  $CC $CFLAGS $LDFLAGS zversion.c -o zversion -lz
+  scp zversion root@192.168.7.2:/tmp/ && ssh root@192.168.7.2 /tmp/zversion
+  ```
+  For comparison, the same file built with the host `gcc` is an x86-64 binary linked
+  against the host's zlib, and it does not run on the target.
+- **Problem:** the SDK build failed with `No space left on device`. `tmp/work` had grown to
+  62 GB, because BitBake keeps every recipe's work directory, and the SDK added a second
+  toolchain (`gcc-cross-canadian`, `nativesdk-qemu`, ...) of about 20 GB.
+  The disk space monitor (`BB_DISKMON_DIRS`) first stopped starting new tasks (`STOPTASKS`) and
+  then halted the build (`HALT`).
+  **Fix:** `INHERIT += "rm_work"` (with `RM_WORK_EXCLUDE` for the recipes I develop) and a
+  clean `tmp/`. Finished recipes are restored from the sstate cache, and `tmp/` dropped from
+  72 GB to 16 GB.
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept
@@ -128,7 +155,7 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 
 ## Next steps
 
-- [ ] Build an SDK (`bitbake my-image -c populate_sdk`) and compile against it outside Yocto
+- [x] Build an SDK (`bitbake my-image -c populate_sdk`) and compile against it outside Yocto
 - [ ] Write a recipe for a CMake project and a systemd/SysVinit service
 - [ ] Kernel: configuration fragments and a kernel module recipe
 - [ ] Create my own distro config instead of using `poky`

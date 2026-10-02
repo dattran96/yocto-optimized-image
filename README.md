@@ -200,6 +200,8 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 - `=m` builds a loadable module that is packaged separately as `kernel-module-exfat`, so it
   had to be added to `IMAGE_INSTALL` in `my-image.bb`. The running kernel exposes its
   configuration in `/proc/config.gz` (`CONFIG_IKCONFIG_PROC=y`).
+- Tested on the target: `zcat /proc/config.gz | grep EXFAT` shows `CONFIG_EXFAT_FS=m`, and after
+  `modprobe exfat` the module appears in `lsmod` and `exfat` is listed in `/proc/filesystems`.
 - Practised the interactive workflow:
   1. `bitbake linux-yocto -c menuconfig`: find an option with `/`, set it with `y` / `m` / `n`, save.
   2. `bitbake linux-yocto -c diffconfig`: writes only the changes to `${WORKDIR}/fragment.cfg`

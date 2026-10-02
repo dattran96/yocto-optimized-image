@@ -167,6 +167,26 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
   `recipes-sysmon/sysmon/`. `BBFILES` in `conf/layer.conf` only matches `recipes-*/*/*.bb`,
   so the file was never parsed. Moved the recipe and `files/` one level down.
 
+### Step 8b: Switching the image from SysVinit to systemd
+
+- Set `INIT_MANAGER = "systemd"` in `local.conf`. In poky this pulls in
+  `conf/distro/include/init-manager-systemd.inc`, which adds `systemd usrmerge` to
+  `DISTRO_FEATURES` and points the `VIRTUAL-RUNTIME_*` variables (init manager, device manager,
+  init scripts) to systemd packages. Checked the result with `bitbake-getvar`.
+- Because `DISTRO_FEATURES` is part of almost every task signature, nearly the whole image was
+  rebuilt. The SysVinit results stay in the sstate cache, so switching back is quick.
+- The `sysmon` recipe was **not changed**: with systemd in `DISTRO_FEATURES` it installs
+  `sysmon.service` instead of `/etc/init.d/sysmon`, and the `systemd` class enables the unit.
+- In the image manifest, `sysvinit`, `initscripts` and `eudev` are replaced by `systemd`,
+  `systemd-udev-rules`, `systemd-serialgetty` and `systemd-compat-units` (96 packages in total).
+- **Finding:** `busybox-syslog` is still installed next to the systemd journal, because
+  `packagegroup-core-boot` always pulls in `${VIRTUAL-RUNTIME_base-utils-syslog}` and poky
+  defaults it to `busybox-syslog` (`default-providers.inc`). Two loggers is a candidate for
+  later image optimization.
+- Trade-off: systemd costs more flash and RAM than SysVinit + BusyBox, but adds restart on
+  failure, a structured journal, dependency-based parallel startup and `systemd-analyze`.
+  A real decision needs measurements (e.g. with `buildhistory` / `buildhistory-diff`).
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept

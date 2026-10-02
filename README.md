@@ -11,6 +11,7 @@ contains:
 | `recipes-microsocks/microsocks/` | A recipe for a third-party project from GitHub, created with `devtool add`, plus a local patch |
 | `recipes-core/images/my-image.bb` | A custom image recipe (`inherit core-image`) with an SSH server |
 | `recipes-sysmon/sysmon/` | A CMake project (`inherit cmake`) packaged as a daemon that starts at boot, with both a SysVinit script and a systemd unit |
+| `recipes-kernel/linux/` | A `linux-yocto` `.bbappend` with a kernel config fragment (exFAT as a module) |
 | `sdk-example/` | A program cross-compiled outside BitBake with the SDK generated from `my-image` |
 
 The [learning log](#learning-log) below records what I did at each step, the
@@ -187,6 +188,30 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
   failure, a structured journal, dependency-based parallel startup and `systemd-analyze`.
   A real decision needs measurements (e.g. with `buildhistory` / `buildhistory-diff`).
 
+### Step 9a: Kernel configuration fragments
+
+- `linux-yocto` builds its `.config` from a base configuration plus small fragments. Added my own
+  fragment from the layer: `recipes-kernel/linux/files/exfat.cfg` (`CONFIG_EXFAT_FS=m`) and
+  `linux-yocto_%.bbappend` with `SRC_URI += "file://exfat.cfg"`. The kernel classes merge `.cfg`
+  files from `SRC_URI` automatically, and `do_kernel_configcheck` warns if a requested option
+  does not end up in the final `.config`.
+- Verified `CONFIG_EXFAT_FS=m` in `tmp/work-shared/qemuarm64/kernel-build-artifacts/.config`.
+  Kconfig added the dependent default `CONFIG_EXFAT_DEFAULT_IOCHARSET="utf8"` by itself.
+- `=m` builds a loadable module that is packaged separately as `kernel-module-exfat`, so it
+  had to be added to `IMAGE_INSTALL` in `my-image.bb`. The running kernel exposes its
+  configuration in `/proc/config.gz` (`CONFIG_IKCONFIG_PROC=y`).
+- Practised the interactive workflow:
+  1. `bitbake linux-yocto -c menuconfig`: find an option with `/`, set it with `y` / `m` / `n`, save.
+  2. `bitbake linux-yocto -c diffconfig`: writes only the changes to `${WORKDIR}/fragment.cfg`
+     (tried with `NTFS3_FS`, which produced `CONFIG_NTFS3_FS=m` plus its sub-options).
+  3. Copy the fragment into the layer under a meaningful name and add it to `SRC_URI`.
+  Changes made only in `menuconfig` are temporary: the next configuration run regenerates
+  `.config` from the recipe and the layer's fragments.
+- **Observation:** running `diffconfig` after `menuconfig` on an option that was already set by
+  my fragment produced no file at all. The configuration had not changed, so there was nothing to write.
+- Decided **not** to keep the NTFS3 fragment: every enabled option adds kernel size, attack surface
+  and maintenance, so a fragment should only exist for a feature the product needs.
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept
@@ -199,6 +224,7 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 
 - [x] Build an SDK (`bitbake my-image -c populate_sdk`) and compile against it outside Yocto
 - [x] Write a recipe for a CMake project and a systemd/SysVinit service
-- [ ] Kernel: configuration fragments and a kernel module recipe
+- [x] Kernel: configuration fragments
+- [ ] Kernel: an out-of-tree kernel module recipe, loaded at boot
 - [ ] Create my own distro config instead of using `poky`
 - [ ] Build for real hardware (e.g. Raspberry Pi with `meta-raspberrypi`)

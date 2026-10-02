@@ -11,6 +11,7 @@ IMAGE_INSTALL = " \
     hello \
     microsocks \
     sysmon \
+    kernel-module-exfat \
 "
 
 IMAGE_FEATURES += "ssh-server-dropbear"

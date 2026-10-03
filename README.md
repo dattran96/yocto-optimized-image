@@ -1,11 +1,12 @@
 # meta-mylayer
 
 A Yocto Project layer I built while learning embedded Linux with Yocto.
-It targets **Yocto 5.0 "Scarthgap" (LTS)** and the **`qemuarm64`** machine, and
-contains:
+It targets **Yocto 5.0 "Scarthgap" (LTS)** and the **`qemuarm64`** machine, uses its own
+distro configuration (`mydistro`, based on poky with systemd), and contains:
 
 | Path | What it shows |
 |---|---|
+| `conf/distro/mydistro.conf` | My own distro: inherits poky and sets the distro policy (systemd as init manager) |
 | `recipes-hello/hello/` | A recipe written by hand for a small C program (cross-compiled with `${CC}`) |
 | `recipes-devtools/file/` | A `.bbappend` that patches an existing poky recipe (`file`), created with `devtool modify` / `devtool finish` |
 | `recipes-microsocks/microsocks/` | A recipe for a third-party project from GitHub, created with `devtool add`, plus a local patch |
@@ -31,7 +32,9 @@ cd poky
 source oe-init-build-env build
 bitbake-layers add-layer ../../meta-mylayer
 
-# conf/local.conf: MACHINE ?= "qemuarm64"
+# conf/local.conf:
+#   MACHINE ?= "qemuarm64"
+#   DISTRO ?= "mydistro"        (my distro from this layer: poky + systemd)
 bitbake my-image
 runqemu my-image nographic        # log in as root
 ```
@@ -39,9 +42,14 @@ runqemu my-image nographic        # log in as root
 On the target:
 
 ```
-hello                  # Hello from my own Yocto layer!
-file -v                # file-5.45 (patched by Dat)
-microsocks -p 1080 &   # prints "Learn yocto", SOCKS5 proxy on port 1080
+cat /etc/os-release        # My Learning Distro 1.0 (learning)
+hello                      # Hello from my own Yocto layer!
+file -v                    # file-5.45 (patched by Dat)
+microsocks -p 1080 &       # prints "Learn yocto", SOCKS5 proxy on port 1080
+systemctl status sysmon    # CMake daemon started at boot
+journalctl -u sysmon -f    # load and memory logged every 10 s
+dmesg | grep mymod         # mymod: hello Dat, ... (kernel module loaded at boot)
+modprobe exfat             # exFAT module enabled by a kernel config fragment
 ```
 
 From the host (with `runqemu` tap networking, target at `192.168.7.2`):
@@ -242,6 +250,24 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
   overrides the configured parameter. `dmesg` reports `loading out-of-tree module taints kernel`,
   which is the expected taint flag `O` for modules built outside the kernel tree.
 
+### Step 10: My own distro configuration
+
+- Separated the three kinds of configuration: **MACHINE** (hardware), **DISTRO** (policies such
+  as the init manager and `DISTRO_FEATURES`) and **IMAGE** (package selection). `local.conf` is
+  only for build-host settings.
+- **Problem found:** `INIT_MANAGER = "systemd"` was only in my `local.conf`, so a fresh clone of
+  this repo would have produced a SysVinit image. Moved it into `conf/distro/mydistro.conf`.
+- `mydistro.conf` uses `require conf/distro/poky.conf` and overrides only what differs (name,
+  version, maintainer, init manager), following the example of `meta-poky/conf/distro/poky-altcfg.conf`.
+  BitBake finds it through `BBPATH` as `conf/distro/${DISTRO}.conf`; `local.conf` only sets `DISTRO ?= "mydistro"`.
+- Checked the values with `bitbake-getvar`. Without `--value` it shows the history of a variable,
+  i.e. that `poky.conf` sets a default for `INIT_MANAGER` and `mydistro.conf` overrides it.
+- On the target, `/etc/os-release` shows `My Learning Distro 1.0 (learning)` and sysmon still runs
+  under systemd.
+- The `WARNING: Poky is a reference Yocto Project distribution ...` login message disappeared. It
+  comes from `meta-poky/recipes-core/base-files/files/poky/motd`, and files in a `poky/` folder are
+  only used when `DISTROOVERRIDES` contains `poky`.
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept
@@ -256,5 +282,5 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 - [x] Write a recipe for a CMake project and a systemd/SysVinit service
 - [x] Kernel: configuration fragments
 - [x] Kernel: an out-of-tree kernel module recipe, loaded at boot
-- [ ] Create my own distro config instead of using `poky`
+- [x] Create my own distro config instead of using `poky`
 - [ ] Build for real hardware (e.g. Raspberry Pi with `meta-raspberrypi`)

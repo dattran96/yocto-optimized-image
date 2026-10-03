@@ -11,6 +11,7 @@ contains:
 | `recipes-microsocks/microsocks/` | A recipe for a third-party project from GitHub, created with `devtool add`, plus a local patch |
 | `recipes-core/images/my-image.bb` | A custom image recipe (`inherit core-image`) with an SSH server |
 | `recipes-sysmon/sysmon/` | A CMake project (`inherit cmake`) packaged as a daemon that starts at boot, with both a SysVinit script and a systemd unit |
+| `recipes-kernel/mymod/` | An out-of-tree kernel module (`inherit module`) with a parameter, loaded automatically at boot |
 | `recipes-kernel/linux/` | A `linux-yocto` `.bbappend` with a kernel config fragment (exFAT as a module) |
 | `sdk-example/` | A program cross-compiled outside BitBake with the SDK generated from `my-image` |
 
@@ -214,6 +215,33 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 - Decided **not** to keep the NTFS3 fragment: every enabled option adds kernel size, attack surface
   and maintenance, so a fragment should only exist for a feature the product needs.
 
+### Step 9b: An out-of-tree kernel module
+
+- Wrote `mymod`, a kernel module with a string parameter (`module_param(whom, charp, 0444)`) that
+  logs a greeting on load and unload. `Makefile` and `COPYING` (GPL-2.0) were taken from the
+  template in `poky/meta-skeleton/recipes-kernel/hello-mod`. The Makefile only sets
+  `obj-m := mymod.o` and calls the kernel's build system with `-C $(KERNEL_SRC)`.
+- The recipe uses `inherit module`, which builds the module against the exact kernel of the image
+  (`KERNEL_SRC=${STAGING_KERNEL_DIR}`). Because of that the recipe is machine-specific
+  (`tmp/work/qemuarm64-poky-linux/mymod`), and the module ends up in the package
+  `kernel-module-mymod-6.6.147-yocto-standard`. The `mymod` package itself is empty and depends on it.
+- `KERNEL_MODULE_AUTOLOAD += "mymod"` and `KERNEL_MODULE_PROBECONF` / `module_conf_mymod =
+  "options mymod whom=Dat"` generate `/usr/lib/modules-load.d/mymod.conf` and
+  `/usr/lib/modprobe.d/mymod.conf` (under `/usr/lib` because of systemd + `usrmerge`).
+- **Finding:** these `.conf` files are not in `image/` (the output of `do_install`). They are
+  created later in `do_package` by `kernel-module-split`, so they appear in `packages-split/` and
+  in `tmp/pkgdata`. `image/` also contained `Module.symvers` for other modules to build against.
+- **Finding:** after the first build only `temp/` was left in the work directory, because
+  `rm_work` had removed it. Package contents can still be checked in
+  `tmp/pkgdata/<machine>/runtime/<package>` (`FILES_INFO`). To inspect the work directory, the
+  recipe was added to `RM_WORK_EXCLUDE` and rebuilt with `bitbake mymod -c cleansstate && bitbake mymod`,
+  because a normal rebuild only restores the packages from sstate.
+- Tested on the target: the module is loaded at boot with `whom=Dat` (`lsmod`, `dmesg`,
+  `/sys/module/mymod/parameters/whom`). `modinfo` shows the `vermagic` that ties it to
+  `6.6.147-yocto-standard`. `rmmod` runs the exit function, and `modprobe mymod whom=Yocto`
+  overrides the configured parameter. `dmesg` reports `loading out-of-tree module taints kernel`,
+  which is the expected taint flag `O` for modules built outside the kernel tree.
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept
@@ -227,6 +255,6 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 - [x] Build an SDK (`bitbake my-image -c populate_sdk`) and compile against it outside Yocto
 - [x] Write a recipe for a CMake project and a systemd/SysVinit service
 - [x] Kernel: configuration fragments
-- [ ] Kernel: an out-of-tree kernel module recipe, loaded at boot
+- [x] Kernel: an out-of-tree kernel module recipe, loaded at boot
 - [ ] Create my own distro config instead of using `poky`
 - [ ] Build for real hardware (e.g. Raspberry Pi with `meta-raspberrypi`)

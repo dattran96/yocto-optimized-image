@@ -1,7 +1,8 @@
 # meta-mylayer
 
 A Yocto Project layer I built while learning embedded Linux with Yocto.
-It targets **Yocto 5.0 "Scarthgap" (LTS)** and the **`qemuarm64`** machine, uses its own
+It targets **Yocto 5.0 "Scarthgap" (LTS)**, runs on the **`qemuarm64`** machine and on real
+hardware (**STM32MP257F-DK** board with ST's `meta-st-stm32mp` BSP), uses its own
 distro configuration (`mydistro`, based on poky with systemd), and contains:
 
 | Path | What it shows |
@@ -13,7 +14,7 @@ distro configuration (`mydistro`, based on poky with systemd), and contains:
 | `recipes-core/images/my-image.bb` | A custom image recipe (`inherit core-image`) with an SSH server |
 | `recipes-sysmon/sysmon/` | A CMake project (`inherit cmake`) packaged as a daemon that starts at boot, with both a SysVinit script and a systemd unit |
 | `recipes-kernel/mymod/` | An out-of-tree kernel module (`inherit module`) with a parameter, loaded automatically at boot |
-| `recipes-kernel/linux/` | A `linux-yocto` `.bbappend` with a kernel config fragment (exFAT as a module) |
+| `recipes-kernel/linux/` | `.bbappend`s for `linux-yocto` (QEMU) and `linux-stm32mp` (ST board) that add the same kernel config fragment (exFAT as a module) |
 | `sdk-example/` | A program cross-compiled outside BitBake with the SDK generated from `my-image` |
 
 The [learning log](#learning-log) below records what I did at each step, the
@@ -50,6 +51,28 @@ systemctl status sysmon    # CMake daemon started at boot
 journalctl -u sysmon -f    # load and memory logged every 10 s
 dmesg | grep mymod         # mymod: hello Dat, ... (kernel module loaded at boot)
 modprobe exfat             # exFAT module enabled by a kernel config fragment
+```
+
+### On the STM32MP257F-DK board
+
+```bash
+git clone -b scarthgap https://git.openembedded.org/meta-openembedded
+git clone -b openstlinux-6.6-yocto-scarthgap-mpu-v26.06.10 https://github.com/STMicroelectronics/meta-st-stm32mp.git
+
+cd poky
+source oe-init-build-env build-stm32mp
+bitbake-layers add-layer ../../meta-openembedded/meta-oe ../../meta-openembedded/meta-python \
+    ../../meta-st-stm32mp ../../meta-mylayer
+
+# conf/local.conf:
+#   MACHINE = "stm32mp25-disco"
+#   DISTRO = "mydistro"
+#   MACHINE_FEATURES:append = " nogpu"   (ST GPU EULA not accepted, see step 11)
+bitbake my-image
+
+# board in USB boot mode, then:
+cd tmp/deploy/images/stm32mp25-disco
+STM32_Programmer_CLI -c port=usb1 -w flashlayout_my-image/optee/FlashLayout_sdcard_stm32mp257f-dk-optee.tsv
 ```
 
 From the host (with `runqemu` tap networking, target at `192.168.7.2`):
@@ -268,6 +291,44 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
   comes from `meta-poky/recipes-core/base-files/files/poky/motd`, and files in a `poky/` folder are
   only used when `DISTROOVERRIDES` contains `poky`.
 
+### Step 11: Building for real hardware (STM32MP257F-DK)
+
+- First flashed ST's prebuilt starter package (`st-image-weston`) with STM32CubeProgrammer to
+  check the board, the boot switches and the serial console (`picocom -b 115200 /dev/ttyACM0`).
+- Learned the STM32MP2 boot chain: boot ROM → TF-A (BL2) → FIP (TF-A BL31, OP-TEE, U-Boot)
+  → Linux kernel → rootfs. The flash layout (`.tsv`) lists every partition of the SD card
+  (`fsbla1/2`, `metadata1/2`, `fip-a/b`, `u-boot-env`, `bootfs`, `vendorfs`, `rootfs`, `userfs`)
+  and the USB loader images that STM32CubeProgrammer uses to write them.
+- Created a second build directory `build-stm32mp` with `meta-oe`, `meta-python` and
+  `meta-st-stm32mp` (tag `openstlinux-6.6-yocto-scarthgap-mpu-v26.06.10`), `MACHINE =
+  "stm32mp25-disco"` and the **same layer, distro and image** as for QEMU. Downloads and the
+  sstate cache are shared between both builds; the sstate match was only 33 %, because the board
+  uses a different CPU tune (`cortexa35` instead of `cortexa57`). The BSP adds the boot firmware
+  recipes (`tf-a-stm32mp`, `optee-os-stm32mp`, `u-boot-stm32mp`, `fip-stm32mp`) and generates the
+  flash layouts in `tmp/deploy/images/stm32mp25-disco/flashlayout_my-image/`.
+- **Problem:** `do_rootfs` failed with `No match for argument: kernel-module-exfat`. The board uses
+  ST's kernel recipe `linux-stm32mp`, so my `linux-yocto_%.bbappend` never applied, and the
+  `.config` had `# CONFIG_EXFAT_FS is not set`. In addition, ST's recipe does not merge `.cfg` files
+  from `SRC_URI` like `linux-yocto`: it only merges the files listed in `KERNEL_CONFIG_FRAGMENTS`
+  with the kernel's `merge_config.sh`. **Fix:** `linux-stm32mp_%.bbappend`, which reuses the same
+  `exfat.cfg` with `KERNEL_CONFIG_FRAGMENTS:append = " ${WORKDIR}/exfat.cfg"`. It has to be
+  `:append`, not `+=`, because the recipe sets `KERNEL_CONFIG_FRAGMENTS:aarch64 = "..."`, and that
+  override assignment replaces the whole variable, including anything added with `+=`.
+- **Problem:** the board booted to the login prompt, then OP-TEE panicked in
+  `clk_stm32_pll_init` and the watchdog reset the board in a loop. The last kernel message was
+  `etnaviv: bound 48280000.gpu`. The open-source GPU driver `etnaviv` asked the secure firmware
+  for a GPU clock, which crashed it. ST's images never load `etnaviv`: `linux-stm32mp.inc` writes
+  `blacklist etnaviv` to `/etc/modprobe.d/blacklist.conf`, but only if `MACHINE_FEATURES`
+  contains `gpu` (added when the ST GPU EULA is accepted) or `nogpu`. I had not accepted the EULA,
+  so neither was set. **Fix:** `MACHINE_FEATURES:append = " nogpu"` in `local.conf`, the switch
+  ST provides for boards without its GPU driver.
+- Checked the fix before flashing by reading the file straight from the image with
+  `debugfs -R "cat /etc/modprobe.d/blacklist.conf" ...splitted-rootfs.ext4`, because `rm_work`
+  had already deleted the image's work directory.
+- Tested on the board: `/etc/os-release` shows `My Learning Distro 1.0`, kernel `6.6.129` (aarch64),
+  `hello` and the patched `file --version` work, `sysmon` runs under systemd, `mymod` is loaded at
+  boot with `whom=Dat`, `modprobe exfat` works, and neither `etnaviv` nor `galcore` is loaded.
+
 ### Other things learned along the way
 
 - `Ctrl-Z` pauses a command instead of cancelling it. A paused `devtool build` kept
@@ -283,4 +344,4 @@ curl --socks5 192.168.7.2:1080 http://192.168.7.1:8000/   # through the proxy on
 - [x] Kernel: configuration fragments
 - [x] Kernel: an out-of-tree kernel module recipe, loaded at boot
 - [x] Create my own distro config instead of using `poky`
-- [ ] Build for real hardware (e.g. Raspberry Pi with `meta-raspberrypi`)
+- [x] Build for real hardware (STM32MP257F-DK with `meta-st-stm32mp`)
